@@ -22,31 +22,57 @@ void print_cert(X509 *cert, unsigned char *md, unsigned int *mdlen);
 char *get_serial(X509 *cert);
 int write_cert(X509 *cert);
 int mismatch_cert(void);
+char *getVerifyMessage(long code);
 
 
 /*
  * Get SSL/TLS certificate check it, maybe ask user about it and act
  * accordingly.
+ * 
+ * Modified to use OpenSSL to verify the certificate.  If OpenSSL thinks the
+ * certificate is valid, then accept it.  Otherwise if the Certicate is self
+ * signed or the certifcate issuer cannot be verified (probably because there
+ * is no truststore) then validate it against the ~/.imapfilter/certicates file.
  */
 int
 get_cert(session *ssn)
 {
 	X509 *cert;
 	long verify;
+	const char *verify_text;
 	unsigned char md[EVP_MAX_MD_SIZE];
 	unsigned int mdlen;
 
 	mdlen = 0;
 
-	/*	If certificate validated normally, accept it	*/
-	verify = SSL_get_verify_result(ssn->sslconn);
-	verbose("Certicate verify result = %d\n", verify);
-	if (verify == X509_V_OK)
-	    return 0;
-	
 	if (!(cert = SSL_get_peer_certificate(ssn->sslconn)))
 		return -1;
 
+	/*	If certificate validated normally, accept it	*/
+	verify = SSL_get_verify_result(ssn->sslconn);
+	verify_text = getVerifyMessage(verify);
+	verbose("C (%d): Certificate subject = %s\n", ssn->socket, X509_NAME_oneline(X509_get_subject_name(cert), NULL, 0));
+	verbose("C (%d): Certicate verify result = (%d) %s\n", ssn->socket, verify, verify_text);
+	if (verify == X509_V_OK)
+	    return 0;
+	
+	/*	If certificate validated with anything other than self signed certificate
+	 * 	or issuer not found in the truststore (most likely no truststore at all)
+	 *	reject with an error
+	 */
+	if (!(verify == X509_V_ERR_DEPTH_ZERO_SELF_SIGNED_CERT || verify == X509_V_ERR_UNABLE_TO_GET_ISSUER_CERT_LOCALLY))
+	{
+	    fatal(ERROR_CERTIFICATE, "Certificate validation error: (%d) %s\n", verify, verify_text);
+	    return -1;
+	}
+	else
+	{
+	    char *certf = get_filepath("certificates");
+	    verbose("C (%d): Certicate will be verified using file '%s'\n", ssn->socket, certf);
+	    xfree(certf);
+	}
+	
+	/*	Process a self-signed certificate using the "certificates" file		*/
 	if (!(X509_digest(cert, EVP_md5(), md, &mdlen)))
 		return -1;
 
@@ -266,3 +292,86 @@ mismatch_cert(void)
 		return -1;
 }
 
+/*
+ * 	Translate an OpenSSL verify error code to text
+ */
+char *
+getVerifyMessage(long code)
+{
+    static struct _ErrorTab
+    {
+	char	text[64];
+	long	code;
+    } errorTab[] =
+	{
+		{	"OK",						0	},
+		{	"ERR_UNABLE_TO_GET_ISSUER_CERT",		2	},
+		{	"ERR_UNABLE_TO_GET_CRL",			3	},
+		{	"ERR_UNABLE_TO_DECRYPT_CERT_SIGNATURE",		4	},
+		{	"ERR_UNABLE_TO_DECRYPT_CRL_SIGNATURE",		5	},
+		{	"ERR_UNABLE_TO_DECODE_ISSUER_PUBLIC_KEY",	6	},
+		{	"ERR_CERT_SIGNATURE_FAILURE",			7	},
+		{	"ERR_CRL_SIGNATURE_FAILURE",			8	},
+		{	"ERR_CERT_NOT_YET_VALID",			9	},
+		{	"ERR_CERT_HAS_EXPIRED",				10	},
+		{	"ERR_CRL_NOT_YET_VALID",			11	},
+		{	"ERR_CRL_HAS_EXPIRED",				12	},
+		{	"ERR_ERROR_IN_CERT_NOT_BEFORE_FIELD",		13	},
+		{	"ERR_ERROR_IN_CERT_NOT_AFTER_FIELD",		14	},
+		{	"ERR_ERROR_IN_CRL_LAST_UPDATE_FIELD",		15	},
+		{	"ERR_ERROR_IN_CRL_NEXT_UPDATE_FIELD",		16	},
+		{	"ERR_OUT_OF_MEM",				17	},
+		{	"ERR_DEPTH_ZERO_SELF_SIGNED_CERT",		18	},
+		{	"ERR_SELF_SIGNED_CERT_IN_CHAIN",		19	},
+		{	"ERR_UNABLE_TO_GET_ISSUER_CERT_LOCALLY",	20	},
+		{	"ERR_UNABLE_TO_VERIFY_LEAF_SIGNATURE",		21	},
+		{	"ERR_CERT_CHAIN_TOO_LONG",			22	},
+		{	"ERR_CERT_REVOKED",				23	},
+		{	"ERR_INVALID_CA",				24	},
+		{	"ERR_PATH_LENGTH_EXCEEDED",			25	},
+		{	"ERR_INVALID_PURPOSE",				26	},
+		{	"ERR_CERT_UNTRUSTED",				27	},
+		{	"ERR_CERT_REJECTED",				28	},
+		{	"ERR_SUBJECT_ISSUER_MISMATCH",			29	},
+		{	"ERR_AKID_SKID_MISMATCH",			30	},
+		{	"ERR_AKID_ISSUER_SERIAL_MISMATCH",		31	},
+		{	"ERR_KEYUSAGE_NO_CERTSIGN",			32	},
+		{	"ERR_UNABLE_TO_GET_CRL_ISSUER",			33	},
+		{	"ERR_UNHANDLED_CRITICAL_EXTENSION",		34	},
+		{	"ERR_KEYUSAGE_NO_CRL_SIGN",			35	},
+		{	"ERR_UNHANDLED_CRITICAL_CRL_EXTENSION",		36	},
+		{	"ERR_INVALID_NON_CA",				37	},
+		{	"ERR_PROXY_PATH_LENGTH_EXCEEDED",		38	},
+		{	"ERR_KEYUSAGE_NO_DIGITAL_SIGNATURE",		39	},
+		{	"ERR_PROXY_CERTIFICATES_NOT_ALLOWED",		40	},
+		{	"ERR_INVALID_EXTENSION",			41	},
+		{	"ERR_INVALID_POLICY_EXTENSION",			42	},
+		{	"ERR_NO_EXPLICIT_POLICY",			43	},
+		{	"ERR_DIFFERENT_CRL_SCOPE",			44	},
+		{	"ERR_UNSUPPORTED_EXTENSION_FEATURE",		45	},
+		{	"ERR_UNNESTED_RESOURCE",			46	},
+		{	"ERR_PERMITTED_VIOLATION",			47	},
+		{	"ERR_EXCLUDED_VIOLATION",			48	},
+		{	"ERR_SUBTREE_MINMAX",				49	},
+		{	"ERR_APPLICATION_VERIFICATION",			50	},
+		{	"ERR_UNSUPPORTED_CONSTRAINT_TYPE",		51	},
+		{	"ERR_UNSUPPORTED_CONSTRAINT_SYNTAX",		52	},
+		{	"ERR_UNSUPPORTED_NAME_SYNTAX",			53	},
+		{	"ERR_CRL_PATH_VALIDATION_ERROR",		54	}
+	};
+	
+	int i;
+	int size = sizeof(errorTab) / sizeof(errorTab[0]);
+	char *result = "";
+	
+	for(i = 0; i < size; i++)
+	{
+	    if (errorTab[i].code == code)
+	    {
+		result = errorTab[i].text;
+		break;
+	    }
+	}
+	
+	return result;
+}

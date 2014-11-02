@@ -143,6 +143,7 @@ init_options(void)
 	set_table_boolean("subscribe", 0);
 	set_table_number("timeout", 60);
 	set_table_boolean("wakeonany", 0);
+	set_table_string("truststore", "/etc/ssl/certs");
 
 	lua_setglobal(lua, "options");
 }

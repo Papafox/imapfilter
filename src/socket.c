@@ -91,6 +91,7 @@ open_secure_connection(session *ssn)
 {
 	int r, e;
 	SSL_CTX *ctx;
+	const char *truststore = get_option_string("truststore");
 
 	if (!ssn->sslproto) {
 		ctx = ssl23ctx;
@@ -114,7 +115,14 @@ open_secure_connection(session *ssn)
 		ctx = ssl23ctx;
 	}
 	
-	SSL_CTX_load_verify_locations(ctx, NULL, "/etc/ssl/certs");
+
+	/*  if the truststore is an existing directory, tell OpenSSL to verify certicates using
+	 *  the CA certificates it contains	*/
+	if (truststore != NULL && truststore[0] != '\0' && exists_dir((char *)truststore) == 1)
+	    SSL_CTX_load_verify_locations(ctx, NULL, truststore);
+	else
+	if (truststore != NULL && truststore[0] != '\0')	// Only print error if truststore specified
+	    error("SSL truststore '%s' either does not exist or is not a directory.  Certicates cannot be automatically verified\n", truststore);
 
 	if (!(ssn->sslconn = SSL_new(ctx)))
 		goto fail;
