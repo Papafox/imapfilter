@@ -167,7 +167,7 @@ open_secure_connection(session *ssn)
 			break;
 		}
 	}
-	if (get_option_boolean("certificates") && get_cert(ssn) == -1)
+	if (get_cert(ssn) == -1)
 		goto fail;
 
 	return 0;

@@ -38,12 +38,14 @@ int
 get_cert(session *ssn)
 {
 	X509 *cert;
+	int cert_flag;
 	long verify;
 	const char *verify_text;
 	unsigned char md[EVP_MAX_MD_SIZE];
 	unsigned int mdlen;
 
 	mdlen = 0;
+	cert_flag = get_option_boolean("certificates");
 
 	if (!(cert = SSL_get_peer_certificate(ssn->sslconn)))
 		return -1;
@@ -51,26 +53,42 @@ get_cert(session *ssn)
 	/*	If certificate validated normally, accept it	*/
 	verify = SSL_get_verify_result(ssn->sslconn);
 	verify_text = getVerifyMessage(verify);
-	verbose("C (%d): Certificate subject = %s\n", ssn->socket, X509_NAME_oneline(X509_get_subject_name(cert), NULL, 0));
-	verbose("C (%d): Certicate verify result = (%d) %s\n", ssn->socket, verify, verify_text);
+	verbose("SSL: Certificate subject = %s\n", X509_NAME_oneline(X509_get_subject_name(cert), NULL, 0));
+	verbose("SSL: Certicate verify result = (%d) %s\n", verify, verify_text);
 	if (verify == X509_V_OK)
 	    return 0;
 	
-	/*	If certificate validated with anything other than self signed certificate
-	 * 	or issuer not found in the truststore (most likely no truststore at all)
-	 *	reject with an error
+	/*	
+	 * 	Reject malformed certificates with an error.  Only allow certificates which
+	 *	either have an issuer which was not found in the truststore (or there is no truststore)
+	 * 	or is self signed.  For either of these cases, verify the certificate using the
+	 * 	'~/.imapfilter/certificates' file.
+	 * 
+	 * 	if options.certificates is false, then any validation error (including self signed and
+	 * 	unknown issuer is fatal.
 	 */
-	if (!(verify == X509_V_ERR_DEPTH_ZERO_SELF_SIGNED_CERT || verify == X509_V_ERR_UNABLE_TO_GET_ISSUER_CERT_LOCALLY))
+	int cert_error = 1;
+	if (cert_flag)
+	{
+	    if (verify == X509_V_ERR_DEPTH_ZERO_SELF_SIGNED_CERT)
+		cert_error = 0;
+	    if (verify == X509_V_ERR_UNABLE_TO_GET_ISSUER_CERT_LOCALLY)
+		cert_error = 0;
+	}
+	if (cert_error)
 	{
 	    fatal(ERROR_CERTIFICATE, "Certificate validation error: (%d) %s\n", verify, verify_text);
 	    return -1;
 	}
-	else
-	{
-	    char *certf = get_filepath("certificates");
-	    verbose("C (%d): Certicate will be verified using file '%s'\n", ssn->socket, certf);
-	    xfree(certf);
-	}
+
+	/* Check is certificates file is disallowed	*/
+	if (!cert_flag)
+	    goto fail;
+	
+	/* Verbose warning	*/
+	char *certf = get_filepath("certificates");
+	verbose("SSL: Certicate will be verified using file '%s'\n", certf);
+	xfree(certf);
 	
 	/*	Process a self-signed certificate using the "certificates" file		*/
 	if (!(X509_digest(cert, EVP_md5(), md, &mdlen)))
@@ -78,18 +96,18 @@ get_cert(session *ssn)
 
 	switch (check_cert(cert, md, &mdlen)) {
 	case 0:
-		print_cert(cert, md, &mdlen);
 		if (isatty(STDIN_FILENO) == 0)
 			fatal(ERROR_CERTIFICATE, "%s\n",
 			    "can't accept certificate in non-interactive mode");
+		print_cert(cert, md, &mdlen);
 		if (write_cert(cert) == -1)
 			goto fail;
 		break;
 	case -1:
-		print_cert(cert, md, &mdlen);
 		if (isatty(STDIN_FILENO) == 0)
 			fatal(ERROR_CERTIFICATE, "%s\n",
 			    "certificate mismatch in non-interactive mode");
+		print_cert(cert, md, &mdlen);
 		if (mismatch_cert() == -1)
 			goto fail;
 		break;
@@ -298,7 +316,7 @@ mismatch_cert(void)
 char *
 getVerifyMessage(long code)
 {
-    static struct _ErrorTab
+    static const struct _ErrorTab
     {
 	char	text[64];
 	long	code;
@@ -368,7 +386,7 @@ getVerifyMessage(long code)
 	{
 	    if (errorTab[i].code == code)
 	    {
-		result = errorTab[i].text;
+		result = (char *)errorTab[i].text;
 		break;
 	    }
 	}
