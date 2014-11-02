@@ -113,6 +113,8 @@ open_secure_connection(session *ssn)
 	} else {
 		ctx = ssl23ctx;
 	}
+	
+	SSL_CTX_load_verify_locations(ctx, NULL, "/etc/ssl/certs");
 
 	if (!(ssn->sslconn = SSL_new(ctx)))
 		goto fail;

@@ -32,11 +32,18 @@ int
 get_cert(session *ssn)
 {
 	X509 *cert;
+	long verify;
 	unsigned char md[EVP_MAX_MD_SIZE];
 	unsigned int mdlen;
 
 	mdlen = 0;
 
+	/*	If certificate validated normally, accept it	*/
+	verify = SSL_get_verify_result(ssn->sslconn);
+	verbose("Certicate verify result = %d\n", verify);
+	if (verify == X509_V_OK)
+	    return 0;
+	
 	if (!(cert = SSL_get_peer_certificate(ssn->sslconn)))
 		return -1;
 
@@ -45,18 +52,18 @@ get_cert(session *ssn)
 
 	switch (check_cert(cert, md, &mdlen)) {
 	case 0:
+		print_cert(cert, md, &mdlen);
 		if (isatty(STDIN_FILENO) == 0)
 			fatal(ERROR_CERTIFICATE, "%s\n",
 			    "can't accept certificate in non-interactive mode");
-		print_cert(cert, md, &mdlen);
 		if (write_cert(cert) == -1)
 			goto fail;
 		break;
 	case -1:
+		print_cert(cert, md, &mdlen);
 		if (isatty(STDIN_FILENO) == 0)
 			fatal(ERROR_CERTIFICATE, "%s\n",
 			    "certificate mismatch in non-interactive mode");
-		print_cert(cert, md, &mdlen);
 		if (mismatch_cert() == -1)
 			goto fail;
 		break;
@@ -258,3 +265,4 @@ mismatch_cert(void)
 	else
 		return -1;
 }
+
