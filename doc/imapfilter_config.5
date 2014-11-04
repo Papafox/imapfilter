@@ -190,6 +190,12 @@ not set, the client will block indefinitely.  This variable takes a
 as a value.  Default is
 .Dq 60
 seconds.
+.It Va truststore
+The directory containing the X.509 CA certificates. This variable takes a
+.Vt string
+as a value.  Default is
+.Dq /etc/ssl/certs
+which is the standard directory found in most Linux distributions.
 .It Va wakeonany
 By enabling this option the IDLE command will return on any event that is
 received from the server, and not just on the
