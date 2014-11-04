@@ -54,7 +54,7 @@ get_cert(session *ssn)
 	verify = SSL_get_verify_result(ssn->sslconn);
 	verify_text = getVerifyMessage(verify);
 	verbose("SSL: Certificate subject = %s\n", X509_NAME_oneline(X509_get_subject_name(cert), NULL, 0));
-	verbose("SSL: Certicate verify result = (%d) %s\n", verify, verify_text);
+	verbose("SSL: Certificate verify result = (%d) %s\n", verify, verify_text);
 	if (verify == X509_V_OK)
 	    return 0;
 	
