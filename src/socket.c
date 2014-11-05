@@ -17,11 +17,9 @@
 #include "session.h"
 
 
-SSL_CTX *ssl3ctx, *ssl23ctx, *tls1ctx;
-#if OPENSSL_VERSION_NUMBER >= 0x01000100fL
-SSL_CTX *tls11ctx, *tls12ctx;
-#endif
+SSL_CTX *sslctx;
 
+long get_ssl_options(session *ssn);
 
 /*
  * Connect to mail server.
@@ -90,34 +88,14 @@ int
 open_secure_connection(session *ssn)
 {
 	int r, e;
-	SSL_CTX *ctx;
 
-	if (!ssn->sslproto) {
-		ctx = ssl23ctx;
-	} else if (!strcasecmp(ssn->sslproto, "ssl3")) {
-		ctx = ssl3ctx;
-	} else if (!strcasecmp(ssn->sslproto, "tls1")) {
-		ctx = tls1ctx;
-	} else if (!strcasecmp(ssn->sslproto, "tls1.1")) {
-#if OPENSSL_VERSION_NUMBER >= 0x01000100fL
-		ctx = tls11ctx;
-#else
-		ctx = tls1ctx;
-#endif
-	} else if (!strcasecmp(ssn->sslproto, "tls1.2")) {
-#if OPENSSL_VERSION_NUMBER >= 0x01000100fL
-		ctx = tls12ctx;
-#else
-		ctx = tls1ctx;
-#endif
-	} else {
-		ctx = ssl23ctx;
-	}
 
-	if (!(ssn->sslconn = SSL_new(ctx)))
+	if (!(ssn->sslconn = SSL_new(sslctx)))
 		goto fail;
 
 	SSL_set_fd(ssn->sslconn, ssn->socket);
+	
+	SSL_set_options(ssn->sslconn, get_ssl_options(ssn));
 
 	for (;;) {
 		if ((r = SSL_connect(ssn->sslconn)) > 0)
@@ -157,6 +135,9 @@ open_secure_connection(session *ssn)
 			break;
 		}
 	}
+	
+	verbose("SSL: Connected to '%s:%s' as '%s' using %s\n", ssn->server, ssn->port, ssn->username, SSL_get_version(ssn->sslconn));
+	
 	if (get_option_boolean("certificates") && get_cert(ssn) == -1)
 		goto fail;
 
@@ -444,4 +425,26 @@ fail:
 	    SSL_RECEIVED_SHUTDOWN);
 
 	return -1;
+}
+
+/*
+ * Derive the SSL options from the account settings
+ */
+long get_ssl_options(session *ssn)
+{
+	long result = SSL_OP_NO_SSLv2 | SSL_OP_NO_SSLv3;
+	
+	if (ssn->sslproto != NULL && ssn->sslproto[0] != '\0')
+	{
+	    if (!strcasecmp(ssn->sslproto, "ssl2"))
+	    {
+		    verbose("Warning: Server '%s' is configured to use SSLv2.  This protocol is insecure should never be used\n", ssn->server);
+		    result = SSL_OP_NO_SSLv2 | SSL_OP_NO_TLSv1;
+	    }
+	    if (!strcasecmp(ssn->sslproto, "ssl3"))
+		    result = SSL_OP_NO_SSLv2 | SSL_OP_NO_TLSv1;
+	    if (!strcasecmp(ssn->sslproto, "tls1"))
+		    result = SSL_OP_NO_SSLv2 | SSL_OP_NO_SSLv3;
+	}
+	return result;
 }
