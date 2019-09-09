@@ -1,3 +1,64 @@
+IMAPFilter 2.6.12 - 03 Oct 2018
+  - Support for Server Name Indication (SNI).
+  - The searching methods return values are described in the config man page.
+  - Example of using the enter_idle() function in the sample extend file.
+
+IMAPFilter 2.6.11 - 19 Nov 2017
+  - Support for interrupting IDLE mode with SIGUSR1/SIGUSR2.
+  - New "persist" option to try to recover a connection indefinitely.
+  - New "range" option to limit messages included in a range.
+  - Bug fix; always close selected mailbox before check_status().
+  - Bug fix; closing of selected mailbox twice with fetch_message().
+
+IMAPFilter 2.6.10 - 16 Dec 2016
+  - Bug fix; segmentation fault on some OpenSSL builds.
+
+IMAPFilter 2.6.9 - 6 Dec 2016
+  - Bug fix; possible problem during STARTTLS negotiation.
+
+IMAPFilter 2.6.8 - 26 Nov 2016
+  - Support building with OpenSSL 1.1.0.
+
+IMAPFilter 2.6.7 - 7 Jun 2016
+  - A dry-run mode that disables all actions that modify data.
+  - Bug fix; handle IDLE untagged responses that are received in pieces.
+
+IMAPFilter 2.6.6 - 23 Jan 2016
+  - Bug fix; print an error message if "ssl" has been set to "ssl3".
+
+IMAPFilter 2.6.5 - 18 Jan 2016
+  - Possible to build again with OpenSSL when support for SSL 3.0 is disabled.
+
+IMAPFilter 2.6.4 - 8 Dec 2015
+  - Support for OAuth 2.0 and the XOAUTH2 authentication mechanism.
+
+IMAPFilter 2.6.3 - 30 Sep 2015
+  - Support for loading a default CA certificates file.
+  - A new has_unkeyword() method to search messages without a keyword flag set.
+  - Bug fix; double quotation around keyword sent by the has_flag() method.
+
+IMAPFilter 2.6.2 - 30 Jun 2015
+  - Bug fix; drop connection on local certificate mismatch.
+
+IMAPFilter 2.6.1 - 29 Jun 2015
+  - Support for loading the system's CA certificates from a file.
+  - Bug fix; flusing of standard output/error in a some cases.
+
+IMAPFilter 2.6 - 16 Jun 2015
+  - Optimizations that vastly improve performance of the meta-searching
+    functionality, by making subsequent search requests limit their scope based
+    on the results already returned by previous requests (previously this was
+    the case only for the match_*() methods).
+  - Lua 5.3 compatibility (the codebase can still be compiled with versions 5.2
+    and 5.1).
+  - A new "limit" option can be used as a work-around for problems that some
+    servers have with long requests.
+  - The documentation now clarifies how to make the client block indefinitely.
+  - Bug fix; the check_status() method now returns 4 numbers on error as
+    described in the documentation (just negative values in this case).
+  - Bug fix; flushing of default output on password prompt.
+  - Bug fix; program fault when very long requests were to be sent.
+
 IMAPFilter 2.5.7 - 16 Nov 2014
   - Support for automatic validation of SSL connections, using the operating
     system's installed trusted CA certificates (usually from authorities that

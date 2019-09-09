@@ -21,9 +21,22 @@
 
 extern buffer ibuf, obuf, nbuf, cbuf;
 extern regexp responses[];
-extern SSL_CTX *ssl3ctx, *ssl23ctx, *tls1ctx;
-#if OPENSSL_VERSION_NUMBER >= 0x01000100fL
-extern SSL_CTX *tls11ctx, *tls12ctx;
+#if OPENSSL_VERSION_NUMBER >= 0x1010000fL
+extern SSL_CTX *sslctx;
+#else
+extern SSL_CTX *ssl23ctx;
+#ifndef OPENSSL_NO_SSL3_METHOD
+extern SSL_CTX *ssl3ctx;
+#endif
+#ifndef OPENSSL_NO_TLS1_METHOD
+extern SSL_CTX *tls1ctx;
+#endif
+#ifndef OPENSSL_NO_TLS1_1_METHOD
+extern SSL_CTX *tls11ctx;
+#endif
+#ifndef OPENSSL_NO_TLS1_2_METHOD
+extern SSL_CTX *tls12ctx;
+#endif
 #endif
 
 options opts;			/* Program options. */
@@ -42,21 +55,28 @@ int
 main(int argc, char *argv[])
 {
 	int c;
+	char *cafile = NULL, *capath = NULL;
 
 	setlocale(LC_CTYPE, "");
 
 	opts.verbose = 0;
 	opts.interactive = 0;
+	opts.dryrun = 0;
 	opts.log = NULL;
 	opts.config = NULL;
 	opts.oneline = NULL;
 	opts.debug = NULL;
-	opts.truststore = "/etc/ssl/certs";
+
+	opts.truststore = NULL;
+	if (exists_dir("/etc/ssl/certs"))
+		opts.truststore = "/etc/ssl/certs";
+	else if (exists_file("/etc/ssl/cert.pem"))
+		opts.truststore = "/etc/ssl/cert.pem";
 
 	env.home = NULL;
 	env.pathmax = -1;
 
-	while ((c = getopt(argc, argv, "Vc:d:e:il:t:v?")) != -1) {
+	while ((c = getopt(argc, argv, "Vc:d:e:il:nt:v?")) != -1) {
 		switch (c) {
 		case 'V':
 			version();
@@ -77,6 +97,9 @@ main(int argc, char *argv[])
 		case 'l':
 			opts.log = optarg;
 			break;
+		case 'n':
+			opts.dryrun = 1;
+			break;
 		case 't':
 			opts.truststore = optarg;
 			break;
@@ -95,6 +118,7 @@ main(int argc, char *argv[])
 	open_debug();
 	create_homedir();
 	catch_signals();
+	ignore_user_signals();
 	open_log();
 	if (opts.config == NULL)
 		opts.config = get_filepath("config.lua");
@@ -108,22 +132,50 @@ main(int argc, char *argv[])
 
 	SSL_library_init();
 	SSL_load_error_strings();
-	ssl3ctx = SSL_CTX_new(SSLv3_client_method());
+#if OPENSSL_VERSION_NUMBER >= 0x1010000fL
+	sslctx = SSL_CTX_new(TLS_method());
+#else
 	ssl23ctx = SSL_CTX_new(SSLv23_client_method());
+#ifndef OPENSSL_NO_SSL3_METHOD
+	ssl3ctx = SSL_CTX_new(SSLv3_client_method());
+#endif
+#ifndef OPENSSL_NO_TLS1_METHOD
 	tls1ctx = SSL_CTX_new(TLSv1_client_method());
-#if OPENSSL_VERSION_NUMBER >= 0x01000100fL
+#endif
+#ifndef OPENSSL_NO_TLS1_1_METHOD
 	tls11ctx = SSL_CTX_new(TLSv1_1_client_method());
+#endif
+#ifndef OPENSSL_NO_TLS1_2_METHOD
 	tls12ctx = SSL_CTX_new(TLSv1_2_client_method());
 #endif
-	if (exists_dir(opts.truststore)) {
-		SSL_CTX_load_verify_locations(ssl3ctx, NULL, opts.truststore);
-		SSL_CTX_load_verify_locations(ssl23ctx, NULL, opts.truststore);
-		SSL_CTX_load_verify_locations(tls1ctx, NULL, opts.truststore);
-#if OPENSSL_VERSION_NUMBER >= 0x01000100fL
-		SSL_CTX_load_verify_locations(tls11ctx, NULL, opts.truststore);
-		SSL_CTX_load_verify_locations(tls12ctx, NULL, opts.truststore);
 #endif
-	}
+	if (exists_dir(opts.truststore))
+		capath = opts.truststore;
+	else if (exists_file(opts.truststore))
+		cafile = opts.truststore;
+#if OPENSSL_VERSION_NUMBER >= 0x1010000fL
+	if (sslctx)
+		SSL_CTX_load_verify_locations(sslctx, cafile, capath);
+#else
+	if (ssl23ctx)
+		SSL_CTX_load_verify_locations(ssl23ctx, cafile, capath);
+#ifndef OPENSSL_NO_SSL3_METHOD
+	if (ssl3ctx)
+		SSL_CTX_load_verify_locations(ssl3ctx, cafile, capath);
+#endif
+#ifndef OPENSSL_NO_TLS1_METHOD
+	if (tls1ctx)
+		SSL_CTX_load_verify_locations(tls1ctx, cafile, capath);
+#endif
+#ifndef OPENSSL_NO_TLS1_1_METHOD
+	if (tls11ctx)
+		SSL_CTX_load_verify_locations(tls11ctx, cafile, capath);
+#endif
+#ifndef OPENSSL_NO_TLS1_2_METHOD
+	if (tls12ctx)
+		SSL_CTX_load_verify_locations(tls12ctx, cafile, capath);
+#endif
+#endif
 
 	start_lua();
 #if LUA_VERSION_NUM < 502
@@ -142,12 +194,28 @@ main(int argc, char *argv[])
 #endif
 	stop_lua();
 
-	SSL_CTX_free(ssl3ctx);
-	SSL_CTX_free(ssl23ctx);
-	SSL_CTX_free(tls1ctx);
-#if OPENSSL_VERSION_NUMBER >= 0x01000100fL
-	SSL_CTX_free(tls11ctx);
-	SSL_CTX_free(tls12ctx);
+#if OPENSSL_VERSION_NUMBER >= 0x1010000fL
+	if (sslctx)
+		SSL_CTX_free(sslctx);
+#else
+	if (ssl23ctx)
+		SSL_CTX_free(ssl23ctx);
+#ifndef OPENSSL_NO_SSL3_METHOD
+	if (ssl3ctx)
+		SSL_CTX_free(ssl3ctx);
+#endif
+#ifndef OPENSSL_NO_TLS1_METHOD
+	if (tls1ctx)
+		SSL_CTX_free(tls1ctx);
+#endif
+#ifndef OPENSSL_NO_TLS1_1_METHOD
+	if (tls11ctx)
+		SSL_CTX_free(tls11ctx);
+#endif
+#ifndef OPENSSL_NO_TLS1_2_METHOD
+	if (tls12ctx)
+		SSL_CTX_free(tls12ctx);
+#endif
 #endif
 	ERR_free_strings();
 
@@ -174,7 +242,7 @@ void
 usage(void)
 {
 
-	fprintf(stderr, "usage: imapfilter [-iVv] [-c configfile] "
+	fprintf(stderr, "usage: imapfilter [-inVv] [-c configfile] "
 	    "[-d debugfile] [-e 'command'] [-l logfile]\n");
 
 	exit(0);

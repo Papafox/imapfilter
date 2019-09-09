@@ -4,6 +4,7 @@
 
 
 void signal_handler(int sig);
+void user_signal_handler(int sig);
 
 
 /*
@@ -20,7 +21,7 @@ catch_signals(void)
 
 
 /*
- * Release signals and reset them to default action.
+ * Reset signals to default action.
  */
 void
 release_signals(void)
@@ -33,7 +34,7 @@ release_signals(void)
 
 
 /*
- * Signal handler for signals that cause termination of program.
+ * Signal handler for signals that cause program's termination.
  */
 void
 signal_handler(int sig)
@@ -42,4 +43,40 @@ signal_handler(int sig)
 	release_signals();
 
 	fatal(ERROR_SIGNAL, "killed by signal %d\n", sig);
+}
+
+
+/*
+ * Ignore user-defined signals.
+ */
+void
+ignore_user_signals(void)
+{
+
+	signal(SIGUSR1, SIG_IGN);
+	signal(SIGUSR2, SIG_IGN);
+}
+
+
+/*
+ * Catch user-defined signals.
+ */
+void
+catch_user_signals(void)
+{
+
+	signal(SIGUSR1, user_signal_handler);
+	signal(SIGUSR2, user_signal_handler);
+}
+
+
+/*
+ * Signal handler for user-defined signals.
+ */
+void
+user_signal_handler(int sig)
+{
+
+	(void)sig;
+	ignore_user_signals();
 }

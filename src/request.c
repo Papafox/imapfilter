@@ -33,18 +33,26 @@ int send_continuation(session *ssn, const char *data, size_t len);
 	switch ((F)) {							       \
 	case -1:							       \
 		if ((!strcasecmp(get_option_string("recover"), "all") ||       \
-		    !strcasecmp(get_option_string("recover"), "errors")) &&    \
-		    request_login(&ssn, NULL, NULL, NULL, NULL, NULL) != -1)   \
-			return STATUS_NONE;				       \
+		    !strcasecmp(get_option_string("recover"), "errors")))      \
+			for (;;) {					       \
+				if (request_login(&ssn, NULL, NULL, NULL,      \
+				    NULL, NULL, NULL) != -1)		       \
+					return STATUS_NONE;		       \
+				if (get_option_boolean("persist"))	       \
+					sleep(WAIT_RETRY_TIMEOUT);	       \
+				else					       \
+					break;				       \
+			}						       \
 		return -1;						       \
 	case STATUS_BYE:						       \
 		close_connection(ssn);					       \
 		if (!strcasecmp(get_option_string("recover"), "all")) {	       \
 			if (request_login(&ssn, NULL, NULL, NULL, NULL,	       \
-			    NULL) != -1)				       \
+			    NULL, NULL) != -1)				       \
 				return STATUS_NONE;			       \
 		} else							       \
 			session_destroy(ssn);				       \
+			ssn = NULL;					       \
 		return -1;						       \
 	}
 
@@ -68,13 +76,15 @@ send_request(session *ssn, const char *fmt,...)
 	va_start(args, fmt);
 	n = vsnprintf(obuf.data + obuf.len, obuf.size - obuf.len -
 	    strlen("\r\n") + 1, fmt, args);
+	va_end(args);
 	if (n > (int)obuf.size) {
 		buffer_check(&obuf, n);
+		va_start(args, fmt);
 		vsnprintf(obuf.data + obuf.len, obuf.size - obuf.len -
 		    strlen("\r\n") + 1, fmt, args);
+		va_end(args);
 	}
 	obuf.len = strlen(obuf.data);
-	va_end(args);
 
 	snprintf(obuf.data + obuf.len, obuf.size - obuf.len + 1, "\r\n");
 	obuf.len = strlen(obuf.data);
@@ -151,9 +161,9 @@ request_noop(session *ssn)
  */
 int
 request_login(session **ssnptr, const char *server, const char *port, const
-    char *ssl, const char *user, const char *pass)
+    char *ssl, const char *user, const char *pass, const char *oauth2)
 {
-	int t, r, rg = -1, rl = -1; 
+	int t, r, rg = -1, rl = -1;
 	session *ssn = *ssnptr;
 	
 	if (*ssnptr && (*ssnptr)->socket != -1)
@@ -166,8 +176,9 @@ request_login(session **ssnptr, const char *server, const char *port, const
 		ssn->port = port;
 		ssn->username = user;
 		ssn->password = pass;
+		ssn->oauth2 = oauth2;
 
-		if (strlen(ssl) != 0)
+		if (ssl)
 			ssn->sslproto = ssl;
 	} else {
 		debug("recovering connection: %s://%s@%s:%s/%s\n",
@@ -201,7 +212,30 @@ request_login(session **ssnptr, const char *server, const char *port, const
 	}
 
 	if (rg != STATUS_PREAUTH) {
-		if (ssn->capabilities & CAPABILITY_CRAMMD5 &&
+		if (ssn->oauth2 && !ssn->password &&
+		   !(ssn->capabilities & CAPABILITY_XOAUTH2)) {
+			error("OAuth2 not supported at %s@%s\n", ssn->username,
+			    ssn->server);
+			close_connection(ssn);
+			session_destroy(ssn);
+			ssn = NULL;
+			return STATUS_NO;
+		}
+		if (ssn->capabilities & CAPABILITY_XOAUTH2 && ssn->oauth2) {
+			CHECK(t = send_request(ssn, "AUTHENTICATE XOAUTH2 %s",
+			    ssn->oauth2));
+			CHECK(rl = response_generic(ssn, t));
+		}
+		if (rl == STATUS_NO) {
+			error("oauth2 string rejected at %s@%s\n",
+			    ssn->username, ssn->server);
+			close_connection(ssn);
+			session_destroy(ssn);
+			ssn = NULL;
+			return STATUS_NO;
+		}
+		if (rl != STATUS_OK && ssn->password &&
+		    ssn->capabilities & CAPABILITY_CRAMMD5 &&
 		    get_option_boolean("crammd5")) {
 			unsigned char *in, *out;
 			CHECK(t = send_request(ssn, "AUTHENTICATE CRAM-MD5"));
@@ -217,17 +251,17 @@ request_login(session **ssnptr, const char *server, const char *port, const
 			} else
 				goto abort;
 		}
-		if (rl != STATUS_OK) {
+		if (rl != STATUS_OK && ssn->password) {
 			CHECK(t = send_request(ssn, "LOGIN \"%s\" \"%s\"",
 			    ssn->username, ssn->password));
 			CHECK(rl = response_generic(ssn, t));
 		}
-
 		if (rl == STATUS_NO) {
 			error("username %s or password rejected at %s\n",
 			    ssn->username, ssn->server);
 			close_connection(ssn);
 			session_destroy(ssn);
+			ssn = NULL;
 			return STATUS_NO;
 		}
 	} else {
@@ -255,6 +289,7 @@ abort:
 	close_connection(ssn);
 fail:
 	session_destroy(ssn);
+	ssn = NULL;
 
 	return -1;
 }
@@ -269,9 +304,11 @@ request_logout(session *ssn)
 
 	if (response_generic(ssn, send_request(ssn, "LOGOUT")) == -1) {
 		session_destroy(ssn);
+		ssn = NULL;
 	} else {
 		close_connection(ssn);
 		session_destroy(ssn);
+		ssn = NULL;
 	}
 	return STATUS_OK;
 }
@@ -351,6 +388,9 @@ int
 request_expunge(session *ssn)
 {
 	int t, r;
+
+	if (opts.dryrun)
+		return STATUS_DRYRUN;
 
 	TRY(t = send_request(ssn, "EXPUNGE"));
 	TRY(r = response_generic(ssn, t));
@@ -579,7 +619,10 @@ request_store(session *ssn, const char *mesg, const char *mode, const char
 {
 	int t, r;
 
-	TRY(t = send_request(ssn, "UID STORE %s %sFLAGS.SILENT (%s)", mesg, 
+	if (opts.dryrun)
+		return STATUS_DRYRUN;
+
+	TRY(t = send_request(ssn, "UID STORE %s %sFLAGS.SILENT (%s)", mesg,
 	    (!strncasecmp(mode, "add", 3) ? "+" :
 	    !strncasecmp(mode, "remove", 6) ? "-" : ""), flags));
 	TRY(r = response_generic(ssn, t));
@@ -601,6 +644,9 @@ request_copy(session *ssn, const char *mesg, const char *mbox)
 {
 	int t, r;
 	const char *m;
+
+	if (opts.dryrun)
+		return STATUS_DRYRUN;
 
 	m = apply_namespace(mbox, ssn->ns.prefix, ssn->ns.delim);
 
@@ -631,6 +677,9 @@ request_append(session *ssn, const char *mbox, const char *mesg, size_t
 	int t, r;
 	const char *m;
 
+	if (opts.dryrun)
+		return STATUS_DRYRUN;
+
 	m = apply_namespace(mbox, ssn->ns.prefix, ssn->ns.delim);
 
 	TRY(t = send_request(ssn, "APPEND \"%s\"%s%s%s%s%s%s {%d}", m,
@@ -639,7 +688,7 @@ request_append(session *ssn, const char *mbox, const char *mesg, size_t
 	    (date ? date : ""), (date ? "\"" : ""), mesglen));
 	TRY(r = response_continuation(ssn, t));
 	if (r == STATUS_CONTINUE) {
-		TRY(send_continuation(ssn, mesg, mesglen)); 
+		TRY(send_continuation(ssn, mesg, mesglen));
 		TRY(r = response_generic(ssn, t));
 	}
 
@@ -656,7 +705,7 @@ request_append(session *ssn, const char *mbox, const char *mesg, size_t
 		    (date ? date : ""), (date ? "\"" : ""), mesglen));
 		TRY(r = response_continuation(ssn, t));
 		if (r == STATUS_CONTINUE) {
-			TRY(send_continuation(ssn, mesg, mesglen)); 
+			TRY(send_continuation(ssn, mesg, mesglen));
 			TRY(r = response_generic(ssn, t));
 		}
 	}
@@ -673,6 +722,9 @@ request_create(session *ssn, const char *mbox)
 {
 	int t, r;
 	const char *m;
+
+	if (opts.dryrun)
+		return STATUS_DRYRUN;
 
 	m = apply_namespace(mbox, ssn->ns.prefix, ssn->ns.delim);
 
@@ -692,6 +744,9 @@ request_delete(session *ssn, const char *mbox)
 	int t, r;
 	const char *m;
 
+	if (opts.dryrun)
+		return STATUS_DRYRUN;
+
 	m = apply_namespace(mbox, ssn->ns.prefix, ssn->ns.delim);
 
 	TRY(t = send_request(ssn, "DELETE \"%s\"", m));
@@ -709,6 +764,9 @@ request_rename(session *ssn, const char *oldmbox, const char *newmbox)
 {
 	int t, r;
 	char *o, *n;
+
+	if (opts.dryrun)
+		return STATUS_DRYRUN;
 
 	o = xstrdup(apply_namespace(oldmbox, ssn->ns.prefix, ssn->ns.delim));
 	n = xstrdup(apply_namespace(newmbox, ssn->ns.prefix, ssn->ns.delim));
@@ -729,6 +787,9 @@ request_subscribe(session *ssn, const char *mbox)
 	int t, r;
 	const char *m;
 
+	if (opts.dryrun)
+		return STATUS_DRYRUN;
+
 	m = apply_namespace(mbox, ssn->ns.prefix, ssn->ns.delim);
 
 	TRY(t = send_request(ssn, "SUBSCRIBE \"%s\"", m));
@@ -746,6 +807,9 @@ request_unsubscribe(session *ssn, const char *mbox)
 {
 	int t, r;
 	const char *m;
+
+	if (opts.dryrun)
+		return STATUS_DRYRUN;
 
 	m = apply_namespace(mbox, ssn->ns.prefix, ssn->ns.delim);
 

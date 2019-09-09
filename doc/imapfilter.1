@@ -1,4 +1,4 @@
-.Dd Nov 9, 2014
+.Dd Apr 27, 2016
 .Dt IMAPFILTER 1
 .Os
 .Sh NAME
@@ -6,7 +6,7 @@
 .Nd mail filter
 .Sh SYNOPSIS
 .Nm
-.Op Fl iVv
+.Op Fl inVv
 .Op Fl c Ar configfile
 .Op Fl d Ar debugfile
 .Op Fl e Ar 'command'
@@ -38,19 +38,22 @@ May be used to enter
 .Dq one line
 of configuration, while it is also possible to pipe a full configuration as a
 string.
-When this options is used, a configuration file will not be loaded.
+When this option is used, a configuration file will not be loaded.
 .It Fl i
 Enters interactive mode after executing the configuration file.
 .It Fl l Ar logfile | syslog
 File that contains logs of error messages produced.  A value of "syslog" will
 cause output to be sent to the system log.
 .It Fl t Ar truststore
-The path to the system's SSL CA TrustStore directory. SSL connections will be
-validated using the CA certificates found in this directory, and when this is
-not possible the local
+The path to the system's SSL CA TrustStore directory or file. SSL connections
+will be validated using the CA certificates found in this directory or file,
+and when this is not possible the local
 .Pa $HOME/.imapfilter/certificates
-file will be used.  The default is
-.Pa /etc/ssl/certs .
+file will be used.  The default is either the
+.Pa /etc/ssl/certs
+directory or the
+.Pa /etc/ssl/cert.pem
+file, whichever is found.
 .It Fl V
 Displays version and copyright information.
 .It Fl v

@@ -138,12 +138,15 @@ init_options(void)
 	set_table_boolean("expunge", 1);
 	set_table_number("keepalive", 29);
 	set_table_boolean("namespace", 1);
+	set_table_boolean("persist", 0);
 	set_table_string("recover", "all");
 	set_table_boolean("reenter", 1);
 	set_table_boolean("starttls", 1);
 	set_table_boolean("subscribe", 0);
 	set_table_number("timeout", 60);
 	set_table_boolean("wakeonany", 0);
+
+	set_table_boolean("dryrun", opts.dryrun);
 
 	lua_setglobal(lua, "options");
 }

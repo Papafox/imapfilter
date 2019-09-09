@@ -40,6 +40,7 @@ session_init(session *ssn)
 	ssn->sslproto = NULL;
 	ssn->username = NULL;
 	ssn->password = NULL;
+	ssn->oauth2 = NULL;
 	ssn->socket = -1;
 	ssn->sslconn = NULL;
 	ssn->protocol = PROTOCOL_NONE;
@@ -62,9 +63,13 @@ session_destroy(session *ssn)
 
 	sessions = list_remove(sessions, ssn);
 
-	if (ssn->ns.prefix)
+	if (ssn->ns.prefix) {
 		xfree(ssn->ns.prefix);
-	if (ssn->selected)
+		ssn->ns.prefix = NULL;
+	}
+	if (ssn->selected) {
 		xfree(ssn->selected);
+		ssn->selected = NULL;
+	}
 	xfree(ssn);
 }

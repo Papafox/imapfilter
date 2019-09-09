@@ -17,9 +17,22 @@
 #include "session.h"
 
 
-SSL_CTX *ssl3ctx, *ssl23ctx, *tls1ctx;
-#if OPENSSL_VERSION_NUMBER >= 0x01000100fL
-SSL_CTX *tls11ctx, *tls12ctx;
+#if OPENSSL_VERSION_NUMBER >= 0x1010000fL
+SSL_CTX *sslctx = NULL;
+#else
+SSL_CTX *ssl23ctx = NULL;
+#ifndef OPENSSL_NO_SSL3_METHOD
+SSL_CTX *ssl3ctx = NULL;
+#endif
+#ifndef OPENSSL_NO_TLS1_METHOD
+SSL_CTX *tls1ctx = NULL;
+#endif
+#ifndef OPENSSL_NO_TLS1_1_METHOD
+SSL_CTX *tls11ctx = NULL;
+#endif
+#ifndef OPENSSL_NO_TLS1_2_METHOD
+SSL_CTX *tls12ctx = NULL;
+#endif
 #endif
 
 
@@ -90,32 +103,53 @@ int
 open_secure_connection(session *ssn)
 {
 	int r, e;
-	SSL_CTX *ctx;
+	SSL_CTX *ctx = NULL;
 
-	if (!ssn->sslproto) {
-		ctx = ssl23ctx;
-	} else if (!strcasecmp(ssn->sslproto, "ssl3")) {
-		ctx = ssl3ctx;
-	} else if (!strcasecmp(ssn->sslproto, "tls1")) {
-		ctx = tls1ctx;
-	} else if (!strcasecmp(ssn->sslproto, "tls1.1")) {
-#if OPENSSL_VERSION_NUMBER >= 0x01000100fL
-		ctx = tls11ctx;
+#if OPENSSL_VERSION_NUMBER >= 0x1010000fL
+	if (sslctx)
+		ctx = sslctx;
 #else
-		ctx = tls1ctx;
-#endif
-	} else if (!strcasecmp(ssn->sslproto, "tls1.2")) {
-#if OPENSSL_VERSION_NUMBER >= 0x01000100fL
-		ctx = tls12ctx;
-#else
-		ctx = tls1ctx;
-#endif
-	} else {
+	if (ssl23ctx)
 		ctx = ssl23ctx;
+
+	if (ssn->sslproto) {
+#ifndef OPENSSL_NO_SSL3_METHOD
+		if (ssl3ctx && !strcasecmp(ssn->sslproto, "ssl3"))
+			ctx = ssl3ctx;
+#endif
+#ifndef OPENSSL_NO_TLS1_METHOD
+		if (tls1ctx && !strcasecmp(ssn->sslproto, "tls1"))
+			ctx = tls1ctx;
+#endif
+#ifndef OPENSSL_NO_TLS1_1_METHOD
+		if (tls11ctx && !strcasecmp(ssn->sslproto, "tls1.1"))
+			ctx = tls11ctx;
+#endif
+#ifndef OPENSSL_NO_TLS1_2_METHOD
+		if (tls12ctx && !strcasecmp(ssn->sslproto, "tls1.2"))
+			ctx = tls12ctx;
+#endif
+	}
+#endif
+
+	if (ctx == NULL) {
+		error("initiating SSL connection to %s; protocol version "
+		      "not supported by current build", ssn->server);
+		goto fail;
 	}
 
 	if (!(ssn->sslconn = SSL_new(ctx)))
 		goto fail;
+
+#if OPENSSL_VERSION_NUMBER >= 0x1000000fL
+	r = SSL_set_tlsext_host_name(ssn->sslconn, ssn->server);
+	if (r == 0) {
+		error("failed setting the Server Name Indication (SNI) to "
+		    "%s; %s\n", ssn->server,
+		    ERR_error_string(ERR_get_error(), NULL));
+		goto fail;
+	}
+#endif
 
 	SSL_set_fd(ssn->sslconn, ssn->socket);
 
@@ -213,7 +247,7 @@ close_secure_connection(session *ssn)
  * Read data from socket.
  */
 ssize_t
-socket_read(session *ssn, char *buf, size_t len, long timeout, int timeoutfail)
+socket_read(session *ssn, char *buf, size_t len, long timeout, int timeoutfail, int *interrupt)
 {
 	int s;
 	ssize_t r;
@@ -237,31 +271,48 @@ socket_read(session *ssn, char *buf, size_t len, long timeout, int timeoutfail)
 
 	FD_ZERO(&fds);
 	FD_SET(ssn->socket, &fds);
- 
-	if (ssn->sslconn) {
-		if (SSL_pending(ssn->sslconn) > 0 ||
-		    ((s = select(ssn->socket + 1, &fds, NULL, NULL, tvp)) > 0 &&
-		    FD_ISSET(ssn->socket, &fds))) {
-			r = socket_secure_read(ssn, buf, len);
 
+	if (ssn->sslconn) {
+		if (SSL_pending(ssn->sslconn) > 0) {
+			r = socket_secure_read(ssn, buf, len);
 			if (r <= 0)
 				goto fail;
+		} else {
+			if (interrupt != NULL)
+				catch_user_signals();
+			if ((s = select(ssn->socket + 1, &fds, NULL, NULL, tvp)) > 0) {
+				if (interrupt != NULL)
+					ignore_user_signals();
+				if (FD_ISSET(ssn->socket, &fds)) {
+					r = socket_secure_read(ssn, buf, len);
+					if (r <= 0)
+						goto fail;
+				}
+			}
 		}
 	} else {
-		if ((s = select(ssn->socket + 1, &fds, NULL, NULL, tvp)) > 0 &&
-		    FD_ISSET(ssn->socket, &fds)) {
-			r = read(ssn->socket, buf, len);
-
-			if (r == -1) {
-				error("reading data; %s\n", strerror(errno));
-				goto fail;
-			} else if (r == 0) {
-				goto fail;
+		if (interrupt != NULL)
+			catch_user_signals();
+		if ((s = select(ssn->socket + 1, &fds, NULL, NULL, tvp)) > 0) {
+			if (interrupt != NULL)
+				ignore_user_signals();
+			if (FD_ISSET(ssn->socket, &fds)) {
+				r = read(ssn->socket, buf, len);
+				if (r == -1) {
+					error("reading data; %s\n", strerror(errno));
+					goto fail;
+				} else if (r == 0) {
+					goto fail;
+				}
 			}
 		}
 	}
 
 	if (s == -1) {
+		if (interrupt != NULL && errno == EINTR) {
+			*interrupt = 1;
+			return -1;
+		}
 		error("waiting to read from socket; %s\n", strerror(errno));
 		goto fail;
 	} else if (s == 0 && timeoutfail) {

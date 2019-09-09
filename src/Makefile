@@ -1,5 +1,5 @@
-DESTDIR =
-PREFIX = /usr/local
+DESTDIR ?=
+PREFIX ?= /usr/local
 BINDIR = $(PREFIX)/bin
 SHAREDIR = $(PREFIX)/share/imapfilter
 MANDIR = $(PREFIX)/man
@@ -18,7 +18,7 @@ LIBCRYPTO = -lcrypto
 
 CFLAGS = -Wall -Wextra -O -DCONFIG_SHAREDIR='"$(SHAREDIR)"' $(INCDIRS) $(MYCFLAGS)
 LDFLAGS = $(LIBDIRS) $(MYLDFLAGS)
-LIBS = -lm $(LIBLUA) $(LIBPCRE) $(LIBSSL) $(LIBCRYPTO) $(MYLIBS)
+LIBS = -lm -ldl $(LIBLUA) $(LIBPCRE) $(LIBSSL) $(LIBCRYPTO) $(MYLIBS)
 
 MAN1 = imapfilter.1
 MAN5 = imapfilter_config.5

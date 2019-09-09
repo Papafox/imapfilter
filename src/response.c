@@ -68,7 +68,7 @@ regexp responses[] = {		/* Server data responses to be parsed;
 };
 
 
-int receive_response(session *ssn, char *buf, long timeout, int timeoutfail);
+int receive_response(session *ssn, char *buf, long timeout, int timeoutfail, int *interrupt);
 
 int check_tag(char *buf, session *ssn, int tag);
 int check_bye(char *buf);
@@ -80,12 +80,12 @@ int check_trycreate(char *buf);
  * Read data the server sent.
  */
 int
-receive_response(session *ssn, char *buf, long timeout, int timeoutfail)
+receive_response(session *ssn, char *buf, long timeout, int timeoutfail, int *interrupt)
 {
 	ssize_t n;
 
 	if ((n = socket_read(ssn, buf, INPUT_BUF, timeout ? timeout :
-	    (long)(get_option_number("timeout")), timeoutfail)) == -1)
+	    (long)(get_option_number("timeout")), timeoutfail, interrupt)) == -1)
 		return -1;
 
 
@@ -219,7 +219,7 @@ response_generic(session *ssn, int tag)
 
 	do {
 		buffer_check(&ibuf, ibuf.len + INPUT_BUF);
-		if ((n = receive_response(ssn, ibuf.data + ibuf.len, 0, 1)) ==
+		if ((n = receive_response(ssn, ibuf.data + ibuf.len, 0, 1, NULL)) ==
 		    -1)
 			return -1;
 		ibuf.len += n;
@@ -249,7 +249,7 @@ response_continuation(session *ssn, int tag)
 
 	do {
 		buffer_check(&ibuf, ibuf.len + INPUT_BUF);
-		if ((n = receive_response(ssn, ibuf.data + ibuf.len, 0, 1)) ==
+		if ((n = receive_response(ssn, ibuf.data + ibuf.len, 0, 1, NULL)) ==
 		    -1)
 			return -1;
 		ibuf.len += n;
@@ -279,7 +279,7 @@ response_greeting(session *ssn)
 
 	buffer_reset(&ibuf);
 
-	if (receive_response(ssn, ibuf.data, 0, 1) == -1)
+	if (receive_response(ssn, ibuf.data, 0, 1, NULL) == -1)
 		return -1;
 
 	verbose("S (%d): %s", ssn->socket, ibuf.data);
@@ -336,9 +336,10 @@ response_capability(session *ssn, int tag)
 			ssn->capabilities |= CAPABILITY_STARTTLS;
 		if (xstrcasestr(s, "CHILDREN"))
 			ssn->capabilities |= CAPABILITY_CHILDREN;
-
 		if (xstrcasestr(s, "IDLE"))
 			ssn->capabilities |= CAPABILITY_IDLE;
+		if (xstrcasestr(s, "AUTH=XOAUTH2"))
+			ssn->capabilities |= CAPABILITY_XOAUTH2;
 
 		xfree(s);
 	}
@@ -618,7 +619,7 @@ response_fetchfast(session *ssn, int tag, char **flags, char **date,
 		return r;
 
 	re = &responses[RESPONSE_FETCH];
-	if (!regexec(re->preg, ibuf.data, re->nmatch, re->pmatch, 0)) { 
+	if (!regexec(re->preg, ibuf.data, re->nmatch, re->pmatch, 0)) {
 		s = xstrndup(ibuf.data + re->pmatch[1].rm_so,
 		    re->pmatch[1].rm_eo - re->pmatch[1].rm_so);
 
@@ -659,7 +660,7 @@ response_fetchflags(session *ssn, int tag, char **flags)
 		return r;
 
 	re = &responses[RESPONSE_FETCH];
-	if (!regexec(re->preg, ibuf.data, re->nmatch, re->pmatch, 0)) { 
+	if (!regexec(re->preg, ibuf.data, re->nmatch, re->pmatch, 0)) {
 		s = xstrndup(ibuf.data + re->pmatch[1].rm_so,
 		    re->pmatch[1].rm_eo - re->pmatch[1].rm_so);
 
@@ -691,7 +692,7 @@ response_fetchdate(session *ssn, int tag, char **date)
 		return r;
 
 	re = &responses[RESPONSE_FETCH];
-	if (!regexec(re->preg, ibuf.data, re->nmatch, re->pmatch, 0)) { 
+	if (!regexec(re->preg, ibuf.data, re->nmatch, re->pmatch, 0)) {
 		s = xstrndup(ibuf.data + re->pmatch[1].rm_so,
 		    re->pmatch[1].rm_eo - re->pmatch[1].rm_so);
 
@@ -723,7 +724,7 @@ response_fetchsize(session *ssn, int tag, char **size)
 		return r;
 
 	re = &responses[RESPONSE_FETCH];
-	if (!regexec(re->preg, ibuf.data, re->nmatch, re->pmatch, 0)) { 
+	if (!regexec(re->preg, ibuf.data, re->nmatch, re->pmatch, 0)) {
 		s = xstrndup(ibuf.data + re->pmatch[1].rm_so,
 		    re->pmatch[1].rm_eo - re->pmatch[1].rm_so);
 
@@ -755,7 +756,7 @@ response_fetchstructure(session *ssn, int tag, char **structure)
 		return r;
 
 	re = &responses[RESPONSE_FETCH];
-	if (!regexec(re->preg, ibuf.data, re->nmatch, re->pmatch, 0)) { 
+	if (!regexec(re->preg, ibuf.data, re->nmatch, re->pmatch, 0)) {
 		s = xstrndup(ibuf.data + re->pmatch[1].rm_so,
 		    re->pmatch[1].rm_eo - re->pmatch[1].rm_so);
 
@@ -796,7 +797,7 @@ response_fetchbody(session *ssn, int tag, char **body, size_t *len)
 
 	do {
 		buffer_check(&ibuf, ibuf.len + INPUT_BUF);
-		if ((n = receive_response(ssn, ibuf.data + ibuf.len, 0, 1)) ==
+		if ((n = receive_response(ssn, ibuf.data + ibuf.len, 0, 1, NULL)) ==
 		    -1)
 			return -1;
 		ibuf.len += n;
@@ -841,6 +842,8 @@ int
 response_idle(session *ssn, int tag, char **event)
 {
 	regexp *re;
+	ssize_t n;
+	int eintr = 0;
 
 	if (tag == -1)
 		return -1;
@@ -850,23 +853,26 @@ response_idle(session *ssn, int tag, char **event)
 	for (;;) {
 		buffer_reset(&ibuf);
 
-		switch (receive_response(ssn, ibuf.data,
-		    get_option_number("keepalive") * 60, 0)) {
-		case -1:
-			return -1;
-			break; /* NOTREACHED */
-		case 0:
-			return STATUS_TIMEOUT;
-			break; /* NOTREACHED */
-		}
+		do {
+			buffer_check(&ibuf, ibuf.len + INPUT_BUF);
+			n = receive_response(ssn, ibuf.data + ibuf.len,
+			    get_option_number("keepalive") * 60, 0, &eintr);
+			if (n < 0) {
+				if (eintr)
+					return STATUS_INTERRUPT;
+				else
+					return -1;
+			}
+			if (n == 0)
+				return STATUS_TIMEOUT;
+			ibuf.len += n;
+
+			if (check_bye(ibuf.data))
+				return STATUS_BYE;
+		} while (regexec(re->preg, ibuf.data, re->nmatch, re->pmatch, 0));
 
 		verbose("S (%d): %s", ssn->socket, ibuf.data);
 
-		if (check_bye(ibuf.data))
-			return STATUS_BYE;
-
-		if (regexec(re->preg, ibuf.data, re->nmatch, re->pmatch, 0))
-			continue;
 		if (get_option_boolean("wakeonany"))
 			break;
 		if (!strncasecmp(ibuf.data + re->pmatch[1].rm_so,

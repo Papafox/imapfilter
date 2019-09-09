@@ -80,7 +80,6 @@ debug(const char *fmt,...)
 	va_start(args, fmt);
 	vfprintf(debugfp, fmt, args);
 	fflush(debugfp);
-
 	va_end(args);
 }
 
@@ -109,6 +108,7 @@ error(const char *fmt,...)
 	va_start(args, fmt);
 	fprintf(stderr, "imapfilter: ");
 	vfprintf(stderr, fmt, args);
+	fflush(stderr);
 	va_end(args);
 	va_start(args, fmt);
 	if (logfp) {
@@ -137,6 +137,7 @@ fatal(unsigned int errnum, const char *fmt,...)
 	va_start(args, fmt);
 	fprintf(stderr, "imapfilter: ");
 	vfprintf(stderr, fmt, args);
+	fflush(stderr);
 	va_end(args);
 
 	if (logfp) {

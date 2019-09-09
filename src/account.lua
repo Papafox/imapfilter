@@ -12,10 +12,22 @@ _imap = {}
 setmetatable(_imap, { __mode = "v" })
 
 
+_undefined = 0
+function _next_undefined()
+    _undefined = _undefined + 1
+    return 'undefined' .. _undefined
+end
+
+
 Account._mt.__call = function (self, arg)
     _check_required(arg.server, 'string')
-    _check_required(arg.username, 'string')
+    if not arg.oauth2 then
+        _check_required(arg.username, 'string')
+    else
+        _check_optional(arg.username, 'string')
+    end
     _check_optional(arg.password, 'string')
+    _check_optional(arg.oauth2, 'string')
     _check_optional(arg.port, 'number')
     _check_optional(arg.ssl, 'string')
 
@@ -24,13 +36,14 @@ Account._mt.__call = function (self, arg)
     object._type = 'account'
     object._account = {}
     object._account.server = arg.server
-    object._account.username = arg.username
+    object._account.username = arg.username or _next_undefined()
     object._account.password = arg.password
+    object._account.oauth2 = arg.oauth2
     object._account.port = tostring(arg.port or arg.ssl and 993 or 143)
-    object._account.ssl = arg.ssl or ''
+    object._account.ssl = arg.ssl
     object._account.session = nil
     object._account.selected = nil
-    object._string = arg.username .. '@' .. arg.server
+    object._string = object._account.username .. '@' .. object._account.server
 
     for key, value in pairs(Account) do
         if type(value) == 'function' then object[key] = value end
@@ -72,18 +85,18 @@ end
 
 
 function Account._login_user(self)
-    if self._account.password == nil then
-        self._account.password = get_password('Enter password for ' ..
-                                              self._string .. ': ')
+    if self._account.password == nil and self._account.oauth2 == nil then
+            self._account.password = get_password('Enter password for ' ..
+                                                  self._string .. ': ')
     end
 
     if self._account.session then return true end
     local r, s = ifcore.login(self._account.server, self._account.port,
                               self._account.ssl, self._account.username,
-                              self._account.password)
+                              self._account.password, self._account.oauth2)
     self._check_result(self, 'login', r)
     if r == false then
-        error('authentication to ' .. self._string .. ' failed.', 0)
+        error('authentication of ' .. self._string .. ' failed.', 0)
     end
     if not r then return false end
 
